@@ -1,0 +1,130 @@
+---
+- hosts: localhost
+  vars:
+    aws_region: us-east-1
+  tasks:
+
+    - name: SpyCloud Challenge
+      ec2_vpc_net:
+        name: SCVPC
+        cidr_block: 10.10.0.0/16
+        region: "{{aws_region}}"
+        tags:
+          module: ec2_vpc_net
+          this: works
+      register: spycloud_vpc
+
+    - name: Create Internet Gateway
+      ec2_vpc_igw:
+        vpc_id: "{{ spycloud_vpc.vpc.id }}"
+        region: "{{aws_region}}"
+        state: present
+      register: sc_igw
+
+    - name: Create Public Subnet 1
+      ec2_vpc_subnet:
+        state: "present"
+        vpc_id: "{{ spycloud_vpc.vpc.id }}"
+        cidr: 10.10.16.0/20
+        region: "{{aws_region}}"
+        tags:
+          Name: "Resources 1"
+        wait: true
+      register: public_subnet1
+
+    - name: Create Public Subnet 2
+      ec2_vpc_subnet:
+        state: "present"
+        vpc_id: "{{ spycloud_vpc.vpc.id }}"
+        cidr: 10.10.32.0/20
+        region: "{{aws_region}}"
+        tags:
+          Name: "Resources 2"
+        wait: true
+      register: public_subnet2
+
+    - name: Create Public Route Table
+      ec2_vpc_route_table:
+        vpc_id: "{{spycloud_vpc.vpc.id}}"
+        region: "{{aws_region}}"
+        subnets:
+        - "{{public_subnet1.subnet.id}}"
+        - "{{public_subnet2.subnet.id}}"
+        routes:
+        - dest: "0.0.0.0/0"
+          gateway_id: "{{sc_igw.gateway_id}}"
+
+    - name: Create Private Subnet
+      ec2_vpc_subnet:
+        state: "present"
+        vpc_id: "{{ spycloud_vpc.vpc.id }}"
+        cidr: 10.10.0.0/20
+        region: "{{aws_region}}"
+        tags:
+          Name: "Web App"
+        wait: yes
+      register: private_subnet
+
+    - name: Create NAT gateway for Public Subnet 1
+      ec2_vpc_nat_gateway:
+        state: present
+        subnet_id: "{{public_subnet1.subnet.id}}"
+        wait: yes
+        region: "{{aws_region}}"
+        if_exist_do_not_create: true
+      register: sc_ngw
+
+    - name: "Print Variable"
+      debug:
+        msg: "{{sc_ngw}}"
+
+    - name: Create Private Route Table
+      ec2_vpc_route_table:
+        vpc_id: "{{spycloud_vpc.vpc.id}}"
+        region: "{{aws_region}}"
+        subnets:
+        - "{{private_subnet.subnet.id}}"
+        routes:
+        - dest: "0.0.0.0/0"
+          gateway_id: "{{sc_ngw.nat_gateway_id}}"
+
+    - name: Create EC2 Bastion
+      ec2_instance:
+        name: "sc_bastion"
+        vpc_subnet_id: "{{public_subnet1.subnet.id}}"
+        region: "{{aws_region}}"
+        key_name: "DubSpyCloud"
+        instance_type: "t2.micro"
+        image_id: "ami-062f7200baf2fa504"
+        network:
+          assign_public_ip: true
+        state: present
+        wait: yes
+      register: sc_bastion
+
+    - name: Create EC2 App
+      ec2_instance:
+        name: "sc_webapp"
+        vpc_subnet_id: "{{private_subnet.subnet.id}}"
+        region: "{{aws_region}}"
+        key_name: "DubSpyCloud"
+        instance_type: "t2.micro"
+        image_id: "ami-062f7200baf2fa504"
+        wait: yes
+        state: present
+        tags:
+          Name: "webapp"
+      register: sc_webapp
+
+    - name: Add EC2 Bastion
+      add_host:
+        hostname: "{{ sc_bastion.instances[0].network_interfaces[0].association.public_ip }}"
+        groups: bastions
+
+    - name: Add EC2 Webapp
+      add_host:
+        hostname: "{{ sc_webapp.instances[0].network_interfaces[0].private_ip_address}}"
+        groups: webservers
+        ansible_host: "{{ sc_bastion.instances[0].network_interfaces[0].association.public_ip }}"
+        ansible_port: 22
+        ansible_ssh_user: ec2-user
