@@ -1,0 +1,82 @@
+---
+- hosts: localhost
+  vars:
+    aws_region: us-east-1
+  tasks:
+
+  - name: Create task definition
+    ecs_taskdefinition:
+      network_mode: awsvpc
+      containers:
+      - name: simple-app
+        cpu: 10
+        essential: true
+        image: "httpd:2.4"
+        memory: 300
+        mountPoints:
+        - containerPath: /usr/local/apache2/htdocs
+          sourceVolume: my-vol
+        portMappings:
+        - containerPort: 80
+          hostPort: 80
+      - name: busybox
+        command:
+          - >
+            /bin/sh -c "while true; do echo '<html><head><title>Amazon ECS Sample App</title></head><body><div><h1>Amazon ECS Sample App</h1><h2>Congratulations!
+            </h2><p>Your application is now running on a container in Amazon ECS.</p>' > top; /bin/date > date ; echo '</div></body></html>' > bottom;
+            cat top date bottom > /usr/local/apache2/htdocs/index.html ; sleep 1; done"
+        cpu: 10
+        entryPoint:
+        - sh
+        - "-c"
+        essential: false
+        image: busybox
+        memory: 200
+        volumesFrom:
+        - sourceContainer: simple-app
+      volumes:
+      - name: my-vol
+      family: test-cluster-taskdef
+      state: present
+      region: "{{aws_region}}"
+    register: task_output
+
+#  - name: Create task definition
+#    ecs_taskdefinition:
+#      family: nginx
+#      containers:
+#      - name: nginx
+#        essential: true
+#        image: "nginx"
+#        portMappings:
+#        - containerPort: 80
+#          hostPort:      80
+#      launch_type: FARGATE
+#      cpu: 512
+#      memory: 1024
+#      state: present
+#      network_mode: awsvpc
+
+#  - name: Create EC2 Cluster
+#    ecs_cluster:
+#      name: sc-prod-cluster
+#      region: "{{aws_region}}"
+#      state: present
+#    register: sc_cluster
+
+  - name: create ECS Service
+    ecs_service:
+      state: present
+      name: sc-prod-service
+      region: "{{aws_region}}"
+      cluster: sc-prod-cluster
+      task_definition: "{{task_output.taskdefinition.family}}:{{task_output.taskdefinition.revision}}"
+      load_balancers:
+        - targetGroupArn: arn:aws:elasticloadbalancing:us-east-1:124756177474:targetgroup/ECSClusterTG/f6a433796384b382
+          containerName: simple-app
+          containerPort: 80
+      desired_count: 1
+      network_configuration:
+        security_groups: testcluster
+        subnets:
+        - "{{private_subnet.subnet.id}}"
