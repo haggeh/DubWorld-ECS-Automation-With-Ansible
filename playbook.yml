@@ -1,14 +1,11 @@
 ---
 # TODO: BuildOut
-# Loadbalacer: TestLB
-# Target Group: ECSClusterTG
-# Security Group: TestCluster
-# VPC Endpoints
+# IAM Role: EC2_ECS_Access
 - hosts: localhost
   vars:
     aws_region: us-east-1
   tasks:
-
+    ### Network
     - name: SpyCloud Challenge
       ec2_vpc_net:
         name: SCVPC
@@ -83,10 +80,6 @@
         if_exist_do_not_create: true
       register: sc_ngw
 
-    - name: "Print Variable"
-      debug:
-        msg: "{{sc_ngw}}"
-
     - name: Create Private Route Table
       ec2_vpc_route_table:
         vpc_id: "{{spycloud_vpc.vpc.id}}"
@@ -98,6 +91,36 @@
         routes:
         - dest: "0.0.0.0/0"
           gateway_id: "{{sc_ngw.nat_gateway_id}}"
+      register: sc_private_route_table
+    
+      
+    ### Security
+    - name: example using security group rule descriptions
+      ec2_group:
+        name: SC_ECSClusterSecurityGroup
+        description: "ECS Cluster Security Group"
+        vpc_id: "{{spycloud_vpc.vpc.id}}"
+        region: "{{aws_region}}"
+        rules:
+          - proto: tcp
+            ports:
+            - 80
+            - 443
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow all on port 80 and 443
+      register: sc_ecscluster_sg
+      
+    # - name: Create new vpc endpoint with the default policy for ECS to register instances
+      # command: aws ec2 create-vpc-endpoint \
+        # --vpc-id  "{{spycloud_vpc.vpc.id}}" \
+        # --vpc-endpoint-type Interface \
+        # --service-name "{{ item }}" \
+        # --subnet-id "{{private_subnet.subnet.id}}" \
+        # --security-group-id "{{ sc_ecscluster_sg.group_id}}"
+      # loop:
+      # - com.amazonaws.us-east-1.ecs-agent
+      # - com.amazonaws.us-east-1.ecs-telemetry
+      # - com.amazonaws.us-east-1.ecs
 
     - name: Create EC2 Bastion
       ec2_instance:
@@ -113,7 +136,34 @@
         wait: yes
       register: sc_bastion
 
-    - name: Create EC2 Cluster
+    ### Loadbalacer
+    - name: Create Target Group
+      elb_target_group:
+        name: "SC-ECSClusterTG"
+        protocol: http
+        port: 80
+        vpc_id: "{{ spycloud_vpc.vpc.id }}"
+        target_type: ip
+        state: present
+      register: sc_ecscluster_tg
+        
+    - name: Create Loadbalacer
+      elb_application_lb:
+        name: SC-ECSClusterLB
+        security_groups:
+          - "{{ sc_ecscluster_sg.group_id}}"
+        subnets:
+          - "{{public_subnet1.subnet.id}}"
+          - "{{public_subnet2.subnet.id}}"
+        listeners:
+          - Protocol: HTTP
+            Port: 80 
+            DefaultActions:
+              - Type: forward
+                TargetGroupName: "{{sc_ecscluster_tg.target_group_name}}"
+        state: present
+
+    - name: Create ECS Cluster
       ecs_cluster:
         name: sc-prod-cluster
         region: "{{aws_region}}"
@@ -129,7 +179,7 @@
         instance_type: "t2.micro"
         instance_role: EC2_ECS_Access
         image_id: "ami-07a63940735aebd38"
-        security_group: testcluster
+        security_group: "{{ sc_ecscluster_sg.group_name}}"
         user_data: |
                   #!/bin/bash
                   echo ECS_CLUSTER={{sc_cluster.cluster.clusterName}} >> /etc/ecs/ecs.config
@@ -139,20 +189,7 @@
           Name: "sc_ecs_host"
       register: sc_ecs_host
 
-#    - name: sleep to let EC2 instance connect to ECS Cluster
-#      wait_for:
-#        timeout: 20
-#      delegate_to: localhost
-
-    - name: Add EC2 Bastion
-      add_host:
-        hostname: "{{ sc_bastion.instances[0].network_interfaces[0].association.public_ip }}"
-        groups: bastions
-
-#    - name: Add EC2 Webapp
-#      add_host:
-#        hostname: "{{ sc_webapp.instances[0].network_interfaces[0].private_ip_address}}"
-#        groups: webservers
-#        ansible_host: "{{ sc_bastion.instances[0].network_interfaces[0].association.public_ip }}"
-#        ansible_port: 22
-#        ansible_ssh_user: ec2-user
+    - name: sleep to let EC2 instance connect to ECS Cluster
+      wait_for:
+        timeout: 30
+      delegate_to: localhost

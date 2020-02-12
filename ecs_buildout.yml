@@ -41,42 +41,19 @@
       region: "{{aws_region}}"
     register: task_output
 
-#  - name: Create task definition
-#    ecs_taskdefinition:
-#      family: nginx
-#      containers:
-#      - name: nginx
-#        essential: true
-#        image: "nginx"
-#        portMappings:
-#        - containerPort: 80
-#          hostPort:      80
-#      launch_type: FARGATE
-#      cpu: 512
-#      memory: 1024
-#      state: present
-#      network_mode: awsvpc
-
-#  - name: Create EC2 Cluster
-#    ecs_cluster:
-#      name: sc-prod-cluster
-#      region: "{{aws_region}}"
-#      state: present
-#    register: sc_cluster
-
   - name: create ECS Service
     ecs_service:
       state: present
-      name: sc-prod-service
+      name: sc-prod-service1
       region: "{{aws_region}}"
       cluster: sc-prod-cluster
       task_definition: "{{task_output.taskdefinition.family}}:{{task_output.taskdefinition.revision}}"
       load_balancers:
-        - targetGroupArn: arn:aws:elasticloadbalancing:us-east-1:124756177474:targetgroup/ECSClusterTG/f6a433796384b382
+        - targetGroupArn: "{{sc_ecscluster_tg.target_group_arn}}"
           containerName: simple-app
           containerPort: 80
       desired_count: 1
       network_configuration:
-        security_groups: testcluster
+        security_groups: "{{ sc_ecscluster_sg.group_id}}"
         subnets:
         - "{{private_subnet.subnet.id}}"
