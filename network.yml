@@ -1,6 +1,4 @@
 ---
-# TODO: BuildOut
-# IAM Role: EC2_ECS_Access
 - hosts: localhost
   vars:
     aws_region: us-east-1
@@ -92,10 +90,25 @@
         - dest: "0.0.0.0/0"
           gateway_id: "{{sc_ngw.nat_gateway_id}}"
       register: sc_private_route_table
-    
-      
+
     ### Security
-    - name: example using security group rule descriptions
+    - name: Create EC2 Role to Launch ECS containers
+      iam_role:
+        name: EC2_ECS_ACCESS
+        assume_role_policy_document:
+          Version: '2008-10-17'
+          Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+        description:  EC2 Role to Launch ECS containers
+        managed_policy:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+      register: ec2_ecs_access_role
+
+    - name: Creating Security Group for communicating with ECS Cluster
       ec2_group:
         name: SC_ECSClusterSecurityGroup
         description: "ECS Cluster Security Group"
@@ -109,19 +122,8 @@
             cidr_ip: 0.0.0.0/0
             rule_desc: allow all on port 80 and 443
       register: sc_ecscluster_sg
-      
-    # - name: Create new vpc endpoint with the default policy for ECS to register instances
-      # command: aws ec2 create-vpc-endpoint \
-        # --vpc-id  "{{spycloud_vpc.vpc.id}}" \
-        # --vpc-endpoint-type Interface \
-        # --service-name "{{ item }}" \
-        # --subnet-id "{{private_subnet.subnet.id}}" \
-        # --security-group-id "{{ sc_ecscluster_sg.group_id}}"
-      # loop:
-      # - com.amazonaws.us-east-1.ecs-agent
-      # - com.amazonaws.us-east-1.ecs-telemetry
-      # - com.amazonaws.us-east-1.ecs
 
+    # Created bastion to ssh into ECS instances for general maintence.
     - name: Create EC2 Bastion
       ec2_instance:
         name: "sc_bastion"
@@ -140,6 +142,7 @@
     - name: Create Target Group
       elb_target_group:
         name: "SC-ECSClusterTG"
+        region: "{{aws_region}}"
         protocol: http
         port: 80
         vpc_id: "{{ spycloud_vpc.vpc.id }}"
@@ -150,6 +153,7 @@
     - name: Create Loadbalacer
       elb_application_lb:
         name: SC-ECSClusterLB
+        region: "{{aws_region}}"
         security_groups:
           - "{{ sc_ecscluster_sg.group_id}}"
         subnets:
@@ -162,34 +166,3 @@
               - Type: forward
                 TargetGroupName: "{{sc_ecscluster_tg.target_group_name}}"
         state: present
-
-    - name: Create ECS Cluster
-      ecs_cluster:
-        name: sc-prod-cluster
-        region: "{{aws_region}}"
-        state: present
-      register: sc_cluster
-
-    - name: Create EC2 Instance for Cluster
-      ec2_instance:
-        name: "sc_ecs_host"
-        vpc_subnet_id: "{{private_subnet.subnet.id}}"
-        region: "{{aws_region}}"
-        key_name: "DubSpyCloud"
-        instance_type: "t2.micro"
-        instance_role: EC2_ECS_Access
-        image_id: "ami-07a63940735aebd38"
-        security_group: "{{ sc_ecscluster_sg.group_name}}"
-        user_data: |
-                  #!/bin/bash
-                  echo ECS_CLUSTER={{sc_cluster.cluster.clusterName}} >> /etc/ecs/ecs.config
-        wait: yes
-        state: present
-        tags:
-          Name: "sc_ecs_host"
-      register: sc_ecs_host
-
-    - name: sleep to let EC2 instance connect to ECS Cluster
-      wait_for:
-        timeout: 30
-      delegate_to: localhost
