@@ -13,12 +13,12 @@
         state: present
       register: sc_cluster
 
-    - name: Create EC2 Instance for Cluster
+    - name: Create EC2 Instances for Cluster
       ec2_instance:
-        name: "sc_ecs_host"
-        vpc_subnet_id: "{{private_subnet.subnet.id}}"
+        name: "sc_ecs_host_{{item}}"
+        vpc_subnet_id: "{{item}}"
         region: "{{aws_region}}"
-        key_name: "DubSpyCloud"
+        key_name: "SC_ECS_Bastion"
         instance_type: "t2.micro"
         instance_role: "{{ec2_ecs_access_role.iam_role.role_name}}"
         image_id: "ami-07a63940735aebd38"
@@ -29,12 +29,25 @@
         wait: yes
         state: present
         tags:
-          Name: "sc_ecs_host"
-      register: sc_ecs_host
+          Name: "sc_ecs_host_{{item}}"
+      with_items:
+      - "{{private_subnet_1.subnet.id}}"
+      - "{{private_subnet_2.subnet.id}}"
+      register: sc_ecs_instances
+      async: 7200
+      poll: 0
+
+    - name: Wait for instance creation to complete
+      async_status: jid={{ item.ansible_job_id }}
+      register: ec2_jobs
+      until: ec2_jobs.finished
+      retries: 300
+      with_items: "{{sc_ecs_instances.results}}"
+      when: sc_ecs_instances.results | length > 0
 
     - name: sleep to let EC2 instance connect to ECS Cluster
       wait_for:
-        timeout: 45
+        timeout: 60
       delegate_to: localhost
 
     - name: Create task definition
@@ -56,8 +69,8 @@
           command:
             - >
               /bin/sh -c "while true; do echo '<html><head><title>Amazon ECS Sample App</title></head><body><div><h1>Amazon ECS Sample App</h1><h2>Congratulations!
-              </h2><p>Your application is now running on a container in Amazon ECS.</p>' > top; /bin/date > date ; echo '</div></body></html>' > bottom;
-              cat top date bottom > /usr/local/apache2/htdocs/index.html ; sleep 1; done"
+              </h2><p>Your application is now running on a container in Amazon ECS.</p>' > top; /bin/date > date ; hostname -i > ipaddr; echo '</div></body></html>' > bottom;
+              cat top date bottom ipaddr > /usr/local/apache2/htdocs/index.html ; sleep 1; done"
           cpu: 10
           entryPoint:
           - sh
@@ -85,8 +98,9 @@
           - targetGroupArn: "{{sc_ecscluster_tg.target_group_arn}}"
             containerName: simple-app
             containerPort: 80
-        desired_count: 1
+        desired_count: 2
         network_configuration:
           security_groups: "{{ sc_ecscluster_sg.group_id}}"
           subnets:
-          - "{{private_subnet.subnet.id}}"
+          - "{{private_subnet_1.subnet.id}}"
+          - "{{private_subnet_2.subnet.id}}"

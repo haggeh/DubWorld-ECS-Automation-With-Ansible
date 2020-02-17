@@ -29,7 +29,7 @@
         region: "{{aws_region}}"
         az: "{{aws_region}}a"
         tags:
-          Name: "Resources 1"
+          Name: "Public_Subnet_1"
         wait: true
       register: public_subnet1
 
@@ -41,7 +41,7 @@
         region: "{{aws_region}}"
         az: "{{aws_region}}b"
         tags:
-          Name: "Resources 2"
+          Name: "Public_Subnet_2"
         wait: true
       register: public_subnet2
 
@@ -58,16 +58,29 @@
         - dest: "0.0.0.0/0"
           gateway_id: "{{sc_igw.gateway_id}}"
 
-    - name: Create Private Subnet
+    - name: Create Private Subnet 1
       ec2_vpc_subnet:
         state: "present"
         vpc_id: "{{ spycloud_vpc.vpc.id }}"
         cidr: 10.10.0.0/20
         region: "{{aws_region}}"
+        az: "{{aws_region}}a"
         tags:
-          Name: "Web App"
+          Name: "Private_Subnet_1"
         wait: yes
-      register: private_subnet
+      register: private_subnet_1
+
+    - name: Create Private Subnet 2
+      ec2_vpc_subnet:
+        state: "present"
+        vpc_id: "{{ spycloud_vpc.vpc.id }}"
+        cidr: 10.10.48.0/20
+        region: "{{aws_region}}"
+        az: "{{aws_region}}b"
+        tags:
+          Name: "Private_Subnet_2"
+        wait: yes
+      register: private_subnet_2
 
     - name: Create NAT gateway for Public Subnet 1
       ec2_vpc_nat_gateway:
@@ -76,20 +89,42 @@
         wait: yes
         region: "{{aws_region}}"
         if_exist_do_not_create: true
-      register: sc_ngw
+      register: sc_ngw_1
 
-    - name: Create Private Route Table
+    - name: Create NAT gateway for Public Subnet 2
+      ec2_vpc_nat_gateway:
+        state: present
+        subnet_id: "{{public_subnet2.subnet.id}}"
+        wait: yes
+        region: "{{aws_region}}"
+        if_exist_do_not_create: true
+      register: sc_ngw_2
+
+    - name: Create Private Route Table 1 For Public NAT 1
       ec2_vpc_route_table:
         vpc_id: "{{spycloud_vpc.vpc.id}}"
         region: "{{aws_region}}"
         tags:
-          Name: sc-private-route-table
+          Name: sc-private-route-table-ngw-1
         subnets:
-        - "{{private_subnet.subnet.id}}"
+        - "{{private_subnet_1.subnet.id}}"
         routes:
         - dest: "0.0.0.0/0"
-          gateway_id: "{{sc_ngw.nat_gateway_id}}"
-      register: sc_private_route_table
+          gateway_id: "{{sc_ngw_1.nat_gateway_id}}"
+      register: sc_private_route_table_1_ngw_1
+
+    - name: Create Private Route Table 2 For For Public NAT 2
+      ec2_vpc_route_table:
+        vpc_id: "{{spycloud_vpc.vpc.id}}"
+        region: "{{aws_region}}"
+        tags:
+          Name: sc-private-route-table-ngw-2
+        subnets:
+        - "{{private_subnet_2.subnet.id}}"
+        routes:
+        - dest: "0.0.0.0/0"
+          gateway_id: "{{sc_ngw_2.nat_gateway_id}}"
+      register: sc_private_route_table_2_ngw_2
 
     ### Security
     - name: Create EC2 Role to Launch ECS containers
@@ -129,7 +164,7 @@
         name: "sc_bastion"
         vpc_subnet_id: "{{public_subnet1.subnet.id}}"
         region: "{{aws_region}}"
-        key_name: "DubSpyCloud"
+        key_name: "SC_ECS_Bastion"
         instance_type: "t2.micro"
         image_id: "ami-062f7200baf2fa504"
         network:
