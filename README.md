@@ -1,8 +1,7 @@
 # Ansible Buildout Automation For ECS Service: From VPC to Service Launch
 
 
-This ansible playbook builds out a highly available ECS environment serving web application containers from an EC2 instance in a private subnet from an application loadbalancer over 2 public subnets.
-Also, includes a bastion host in public subnet for general maintenace of EC2 Instances in private subnet. 
+This ansible playbook builds out a highly available ECS environment across 2 AZs. Each AZ is serving web application containers from an EC2 instance in a private subnet as well as a public subnet that is attached to ELB, directing external traffic to both AZs.  Also, includes a bastion host in public subnet for general maintenace of EC2 Instances in private subnet. 
 
 
 Map of VPC using Duo Labs [Cloudmapper](https://github.com/duo-labs/cloudmapper):
